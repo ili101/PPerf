@@ -3,6 +3,8 @@ PowerShell Iperf GUI
 
 A PowerShell script to start iperf and show the output (similar to Jperf)
 
+(This is not a finished product but it generally working)
+
 ## To do list
 * Rearrange interface
 * Add more iperf parameters to interface
