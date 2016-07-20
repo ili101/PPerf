@@ -1,11 +1,15 @@
-﻿param($Work)
+#requires -Version 3
+param($Work)
 
 # restart PowerShell with -noexit, the same script, and 1
-if ((!$Work) -and ($host.name -eq 'ConsoleHost')) {
+if ((!$Work) -and ($host.name -eq 'ConsoleHost')) 
+{
     powershell.exe -noexit -file $MyInvocation.MyCommand.Path 1
     return
 }
+
 Write-Verbose -Message 'Version 2.27' -Verbose
+
 # Set Variables
 $SyncHash = [hashtable]::Synchronized(@{})
 $SyncHash.Host = $host
@@ -22,19 +26,19 @@ $UiRunspace.SessionStateProxy.SetVariable('syncHash',$SyncHash)
 $UiPowerShell = [PowerShell]::Create().AddScript(
     {
         $SyncHash.host.ui.WriteVerboseLine(' UI Script Started')
-        # Set Variables
+        trap {$SyncHash.host.ui.WriteErrorLine($_)}
 
         function Start-Iperf
         {
             $SyncHash.host.ui.WriteVerboseLine('Start-Iperf')
             if ($SyncHash.IperfJob.State -eq 'Running')
             {
-                $SyncHash.host.ui.WriteVerboseLine('Iperf Already Running')
+                $SyncHash.host.ui.WriteWarningLine('Iperf Already Running')
             }
             else
             {
                 $SyncHash.host.ui.WriteVerboseLine('Iperf Start')
-                $IperfScript =
+                $IperfScript = 
                 {
                     param($Command,$CsvFilePath,$IperfFolder)
                     Set-Location -Path $IperfFolder
@@ -47,59 +51,37 @@ $UiPowerShell = [PowerShell]::Create().AddScript(
                 #$SyncHash.Remove('IperfJob')
 
                 # Iperf Job Monitor with Register-ObjectEvent in Runspace
+                $SessionStateFunction = New-Object System.Management.Automation.Runspaces.SessionStateFunctionEntry -ArgumentList 'Stop-Iperf', (Get-Content Function:\Stop-Iperf)
+                $InitialSessionState = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
+                $InitialSessionState.Commands.Add($SessionStateFunction)
 
-                if ($SyncHash.IperfJobMonitorRunspace)
-                {
-                    $SyncHash.host.ui.WriteVerboseLine('IperfJobMonitorRunspace Clean')
-                    $SyncHash.host.ui.WriteVerboseLine('IperfJobMonitorEvent: ' + $SyncHash.IperfJobMonitorEvent.Error)
-                    $SyncHash.IperfJobMonitorPowerShell.EndInvoke($SyncHash.IperfJobMonitorHandle)
-                    $SyncHash.IperfJobMonitorRunspace.Close()
-                    $SyncHash.IperfJobMonitorPowerShell.Dispose()
-                }
-                $SyncHash.IperfJobMonitorRunspace = [runspacefactory]::CreateRunspace()
+                $SyncHash.IperfJobMonitorRunspace = [runspacefactory]::CreateRunspace($InitialSessionState)
                 $SyncHash.IperfJobMonitorRunspace.ApartmentState = 'STA'
                 $SyncHash.IperfJobMonitorRunspace.ThreadOptions = 'ReuseThread'
                 $SyncHash.IperfJobMonitorRunspace.Open()
                 $SyncHash.IperfJobMonitorRunspace.SessionStateProxy.SetVariable('syncHash',$SyncHash)
                 $SyncHash.IperfJobMonitorPowerShell = [PowerShell]::Create().AddScript(
-                {
-                    function Stop-Iperf
                     {
-                        $SyncHash.host.ui.WriteVerboseLine('Stop-Iperf')
-                        if ($SyncHash.IperfJob)
-                        {
-                            if ($SyncHash.IperfJob.state -eq 'Completed')
-                            {
-                                $SyncHash.host.ui.WriteVerboseLine('Iperf Receive Job')
-                                $SyncHash.IperfJobOutputTextBox.Text = $SyncHash.IperfJob | Receive-Job 2>&1
-                            }
-                            else
-                            {
-                                $SyncHash.host.ui.WriteVerboseLine('Iperf Stop Job')
-                                $SyncHash.IperfJobOutputTextBox.Text = $SyncHash.IperfJob | Stop-Job 2>&1
-                            }
-                            $SyncHash.IperfJob | Remove-Job
-                            Remove-Variable -Name SyncHash.IperfJob
-                            #Get-Job | Remove-Job -Force
+                        trap {$SyncHash.host.ui.WriteErrorLine($_)}
+                        $SyncHash.IperfJobMonitorEvent = Register-ObjectEvent -InputObject $SyncHash.IperfJob -EventName StateChanged -MessageData $SyncHash.IperfJob.Id -SourceIdentifier IperfJobMonitor -Action {
+                            $SyncHash.host.ui.WriteVerboseLine('Iperf Job Finished')
+                            Stop-Iperf
                         }
-                    }
-                    $SyncHash.IperfJobMonitorEvent = Register-ObjectEvent -InputObject $SyncHash.IperfJob -EventName StateChanged -MessageData $SyncHash.IperfJob.Id -SourceIdentifier IperfJobMonitor -Action {
-                    $SyncHash.host.ui.WriteVerboseLine('Iperf Job Finished')
-                    Stop-Iperf
-                }
-                #Get-EventSubscriber | Unregister-Event
-                #$SyncHash.Remove('IperfJobMonitor')
-                })
+                        #Get-EventSubscriber | Unregister-Event
+                        #$SyncHash.Remove('IperfJobMonitor')
+                    })
                 $SyncHash.IperfJobMonitorPowerShell.Runspace = $SyncHash.IperfJobMonitorRunspace
                 $SyncHash.IperfJobMonitorHandle = $SyncHash.IperfJobMonitorPowerShell.BeginInvoke()
             }
         }
 
-        function Global:Stop-Iperf
+        function Stop-Iperf
         {
             $SyncHash.host.ui.WriteVerboseLine('Stop-Iperf')
             if ($SyncHash.IperfJob)
             {
+                $SyncHash.IperfJobMonitorEvent.StopJob()
+
                 if ($SyncHash.IperfJob.state -eq 'Completed')
                 {
                     $SyncHash.host.ui.WriteVerboseLine('Iperf Receive Job')
@@ -111,17 +93,30 @@ $UiPowerShell = [PowerShell]::Create().AddScript(
                     $SyncHash.IperfJobOutputTextBox.Text = $SyncHash.IperfJob | Stop-Job 2>&1
                 }
                 $SyncHash.IperfJob | Remove-Job
-                Remove-Variable -Name SyncHash.IperfJob
+                $SyncHash.Remove('IperfJob')
                 #Get-Job | Remove-Job -Force
+                $SyncHash.host.ui.WriteVerboseLine('IperfJobMonitorRunspace Clean')
+                $SyncHash.host.ui.WriteVerboseLine('IperfJobMonitorEvent: ' + $SyncHash.IperfJobMonitorEvent.Error)
+                $SyncHash.IperfJobMonitorPowerShell.EndInvoke($SyncHash.IperfJobMonitorHandle)
+                $SyncHash.IperfJobMonitorRunspace.Close()
+                $SyncHash.IperfJobMonitorPowerShell.Dispose()
             }
         }
 
         function Start-Analyzer
         {
             $SyncHash.host.ui.WriteVerboseLine('Start-Analyzer')
-            if ($SyncHash.AnalyzerRunspace.RunspaceStateInfo.State -eq 'Opened')
+            if (!(Test-Path -Path $SyncHash.CsvFilePathTextBox.Text))
             {
-                $SyncHash.host.ui.WriteVerboseLine('Analyzer Already Running')
+                $SyncHash.host.ui.WriteErrorLine('File not found')
+            }
+            elseif (!(($TestCsv = Get-Content -TotalCount 2 -Path $SyncHash.CsvFilePathTextBox.Text | ConvertFrom-Csv) -and $TestCsv.Bandwidth))
+            {
+                $SyncHash.host.ui.WriteErrorLine('CSV Error')
+            }
+            elseif ($SyncHash.AnalyzerRunspace.RunspaceStateInfo.State -eq 'Opened')
+            {
+                $SyncHash.host.ui.WriteWarningLine('Analyzer Already Running')
             }
             else
             {
@@ -135,16 +130,104 @@ $UiPowerShell = [PowerShell]::Create().AddScript(
                 $SyncHash.AnalyzerPowerShell = [powershell]::Create()
                 $SyncHash.AnalyzerPowerShell.Runspace = $SyncHash.AnalyzerRunspace
                 $null = $SyncHash.AnalyzerPowerShell.AddScript($AnalyzerScript)
-                $SyncHash.host.ui.WriteVerboseLine('Start-Analyzer')
+                $SyncHash.host.ui.WriteVerboseLine('Starting-Analyzer')
                 $SyncHash.AnalyzerHandle = $SyncHash.AnalyzerPowerShell.BeginInvoke()
+            }
+        }
+
+        # Analyzer Runspace Script
+        $AnalyzerScript = 
+        {
+            $SyncHash.host.ui.WriteVerboseLine('Analyzer')
+            trap {$SyncHash.host.ui.WriteErrorLine($_)}
+            trap [System.Management.Automation.PipelineStoppedException] {$SyncHash.host.ui.WriteVerboseLine($_)}
+            
+            $AnalyzerData = New-Object -TypeName System.Collections.Generic.List[System.Object]
+            Get-Content -Path $SyncHash.CsvFilePathTextBox.Text |
+            ConvertFrom-Csv |
+            ForEach-Object -Process {
+                $_.Bandwidth = $_.Bandwidth /1Mb
+                $_.Transfer = $_.Transfer /1Mb
+                if (!($_.Interval).StartsWith('0.0-') -or ($_.Interval -eq '0.0-1.0'))
+                {
+                    $AnalyzerData.add($_)
+                }   
+                else  
+                {
+                    $SyncHash.host.ui.WriteVerboseLine('Remove Total ' + $_.Time)
+                }
+            }
+            $AnalyzerDataLength = $AnalyzerData.Count
+
+            $SyncHash.host.ui.WriteVerboseLine(($AnalyzerDataLength | Out-String) + ($AnalyzerData[$AnalyzerDataLength-1] | Out-String))
+
+            if ($AnalyzerDataLength -gt $SyncHash.LastXTextBox.Text -and $SyncHash.LastXTextBox.Text -gt 0)
+            {
+                $SyncHash.host.ui.WriteVerboseLine('Trim 1')
+                $TrimedData = $AnalyzerData.GetRange($AnalyzerDataLength - $SyncHash.LastXTextBox.Text, $SyncHash.LastXTextBox.Text)
+                $ChartDataAction1 = [Action]{
+                    $SyncHash.Chart.Series['Bandwidth (Mbits/sec)'].Points.DataBindXY($TrimedData.Interval, $TrimedData.Bandwidth)
+                    $SyncHash.Chart.Series['Transfer (MBytes)'].Points.DataBindXY($TrimedData.Interval, $TrimedData.Transfer)
+                }
+            }
+            else
+            {
+                $ChartDataAction1 = [Action]{
+                    $SyncHash.Chart.Series['Bandwidth (Mbits/sec)'].Points.DataBindXY($AnalyzerData.Interval, $AnalyzerData.Bandwidth)
+                    $SyncHash.Chart.Series['Transfer (MBytes)'].Points.DataBindXY($AnalyzerData.Interval, $AnalyzerData.Transfer)
+                }
+            }
+            $SyncHash.Chart.Invoke($ChartDataAction1)
+
+            Get-Content -Path $SyncHash.CsvFilePathTextBox.Text -Wait -Tail 1 |
+            ConvertFrom-Csv -Header Time, localIp, localPort, RemoteIp, RemotePort, Id, Interval, Transfer, Bandwidth |
+            ForEach-Object -Process {
+                if (!($_.Interval).StartsWith('0.0-') -or ($_.Interval -eq '0.0-1.0'))
+                {
+                    $_.Bandwidth = $_.Bandwidth /1Mb
+                    $_.Transfer = $_.Transfer /1Mb
+                    
+                    $AnalyzerData.add($_)
+                    $AnalyzerDataLength++
+                    #$SyncHash.host.ui.WriteVerboseLine($_)
+                    #$SyncHash.host.ui.WriteVerboseLine($AnalyzerDataLength)
+                    $AnalyzerDataLine = $_
+
+                    if ($AnalyzerDataLength -gt -1)
+                    {
+                        $ChartDataAction2 = [Action]{
+                            if ($AnalyzerDataLength -gt $SyncHash.LastXTextBox.Text -and $SyncHash.LastXTextBox.Text -gt 0)
+                            {
+                                $SyncHash.Chart.Series['Bandwidth (Mbits/sec)'].Points.RemoveAt(0)
+                                $SyncHash.Chart.Series['Transfer (MBytes)'].Points.RemoveAt(0)
+                            }
+                            $SyncHash.Chart.Series['Bandwidth (Mbits/sec)'].Points.AddXY($AnalyzerDataLine.Interval, $AnalyzerDataLine.Bandwidth)
+                            $SyncHash.Chart.Series['Transfer (MBytes)'].Points.AddXY($AnalyzerDataLine.Interval, $AnalyzerDataLine.Transfer)
+                            $SyncHash.host.ui.WriteVerboseLine('Test: ' + ($SyncHash.Chart.Series['Transfer (MBytes)'].Points.Count |
+                            Out-String))
+                        }
+                        $SyncHash.Chart.Invoke($ChartDataAction2)
+                        #$SyncHash.MaxScaleTextBox.Text = $SyncHash.Chart.ChartAreas[0].Axisy.Maximum
+                    }
+                    #$SyncHash.host.ui.WriteVerboseLine(($AnalyzerData | Out-String))
+                }
+                else  
+                {
+                    $SyncHash.host.ui.WriteVerboseLine('Remove Total2 ' + $_.Time)
+                }
             }
         }
 
         function Stop-Analyzer
         {
             $SyncHash.host.ui.WriteVerboseLine('Stop-Analyzer')
-            $SyncHash.AnalyzerRunspace.Close()
-            $SyncHash.AnalyzerPowerShell.Dispose()
+            if ($SyncHash.AnalyzerRunspace.RunspaceStateInfo.State -eq 'Opened')
+            {
+                $SyncHash.host.ui.WriteVerboseLine('Stopping-Analyzer')
+                $SyncHash.AnalyzerRunspace.Close()
+                $SyncHash.AnalyzerPowerShell.Dispose()
+            }
+            
         }
 
         function Set-IperfCommand
@@ -200,28 +283,36 @@ $UiPowerShell = [PowerShell]::Create().AddScript(
         $SyncHash.StartIperfButton = New-Object -TypeName System.Windows.Forms.Button
         $SyncHash.StartIperfButton.Text = 'Start Iperf'
         $SyncHash.StartIperfButton.Location = New-Object -TypeName System.Drawing.Size -ArgumentList (0, 0)
-        $SyncHash.StartIperfButton.Add_Click({Start-Iperf})
+        $SyncHash.StartIperfButton.Add_Click({
+                Start-Iperf
+        })
         $SyncHash.Form.Controls.Add($SyncHash.StartIperfButton)
 
         # Stop Iperf Button
         $SyncHash.StopIperfButton = New-Object -TypeName System.Windows.Forms.Button
         $SyncHash.StopIperfButton.Text = 'Stop Iperf'
         $SyncHash.StopIperfButton.Location = New-Object -TypeName System.Drawing.Size -ArgumentList (75, 0)
-        $SyncHash.StopIperfButton.Add_Click({Stop-Iperf})
+        $SyncHash.StopIperfButton.Add_Click({
+                Stop-Iperf
+        })
         $SyncHash.Form.Controls.Add($SyncHash.StopIperfButton)
 
         # Start Analyzer Button
         $SyncHash.StartAnalyzerButton = New-Object -TypeName System.Windows.Forms.Button
         $SyncHash.StartAnalyzerButton.Text = 'Start Analyzer'
         $SyncHash.StartAnalyzerButton.Location = New-Object -TypeName System.Drawing.Size -ArgumentList (0, 25)
-        $SyncHash.StartAnalyzerButton.Add_Click({Start-Analyzer})
+        $SyncHash.StartAnalyzerButton.Add_Click({
+                Start-Analyzer
+        })
         $SyncHash.Form.Controls.Add($SyncHash.StartAnalyzerButton)
 
         # Stop Analyzer Button
         $SyncHash.StopAnalyzerButton = New-Object -TypeName System.Windows.Forms.Button
         $SyncHash.StopAnalyzerButton.Text = 'Stop Analyzer'
         $SyncHash.StopAnalyzerButton.Location = New-Object -TypeName System.Drawing.Size -ArgumentList (75, 25)
-        $SyncHash.StopAnalyzerButton.Add_Click({Stop-Analyzer})
+        $SyncHash.StopAnalyzerButton.Add_Click({
+                Stop-Analyzer
+        })
         $SyncHash.Form.Controls.Add($SyncHash.StopAnalyzerButton)
 
         # IP TextBox
@@ -230,7 +321,9 @@ $UiPowerShell = [PowerShell]::Create().AddScript(
         $SyncHash.IpTextBox.Top = 50
         #$SyncHash.IpTextBox.width = 200
         $SyncHash.IpTextBox.Text = '127.0.0.1'
-        $SyncHash.IpTextBox.add_TextChanged({Set-IperfCommand})
+        $SyncHash.IpTextBox.add_TextChanged({
+                Set-IperfCommand
+        })
         $SyncHash.Form.Controls.Add($SyncHash.IpTextBox)
 
         # Time TextBox
@@ -239,7 +332,9 @@ $UiPowerShell = [PowerShell]::Create().AddScript(
         $SyncHash.TimeTextBox.Top = 50
         #$SyncHash.TimeTextBox.width = 200
         $SyncHash.TimeTextBox.Text = 60
-        $SyncHash.TimeTextBox.add_TextChanged({Set-IperfCommand})
+        $SyncHash.TimeTextBox.add_TextChanged({
+                Set-IperfCommand
+        })
         $SyncHash.Form.Controls.Add($SyncHash.TimeTextBox)
 
         # Command TextBox
@@ -262,7 +357,9 @@ $UiPowerShell = [PowerShell]::Create().AddScript(
         $SyncHash.ClientRadio.size = New-Object -TypeName System.Drawing.Size -ArgumentList (80, 20)
         $SyncHash.ClientRadio.Checked = $true
         $SyncHash.ClientRadio.Text = 'Client'
-        $SyncHash.ClientRadio.add_CheckedChanged({Set-IperfCommand})
+        $SyncHash.ClientRadio.add_CheckedChanged({
+                Set-IperfCommand
+        })
         $SyncHash.ModeGroupBox.Controls.Add($SyncHash.ClientRadio)
 
         $SyncHash.ServerRadio = New-Object -TypeName System.Windows.Forms.RadioButton
@@ -308,7 +405,9 @@ $UiPowerShell = [PowerShell]::Create().AddScript(
         $SyncHash.MaxScaleTextBox.Top = 0
         $SyncHash.MaxScaleTextBox.width = 50
         $SyncHash.MaxScaleTextBox.Text = $SyncHash.Chart.ChartAreas[0].Axisy.Maximum
-        $SyncHash.MaxScaleTextBox.add_TextChanged({$SyncHash.Chart.ChartAreas[0].Axisy.Maximum = $SyncHash.MaxScaleTextBox.Text})
+        $SyncHash.MaxScaleTextBox.add_TextChanged({
+                $SyncHash.Chart.ChartAreas[0].Axisy.Maximum = $SyncHash.MaxScaleTextBox.Text
+        })
         $SyncHash.Form.Controls.Add($SyncHash.MaxScaleTextBox)
 
         # LastX TextBox
@@ -317,90 +416,16 @@ $UiPowerShell = [PowerShell]::Create().AddScript(
         $SyncHash.LastXTextBox.Top = 0
         $SyncHash.LastXTextBox.width = 50
         $SyncHash.LastXTextBox.Text = 0
-        $SyncHash.LastXTextBox.add_TextChanged({})
+        $SyncHash.LastXTextBox.add_TextChanged({
+
+        })
         $SyncHash.Form.Controls.Add($SyncHash.LastXTextBox)
 
         Set-IperfCommand
 
-        # Analyzer Runspace Script
-        $AnalyzerScript = 
-        {
-            $SyncHash.host.ui.WriteVerboseLine('Analyzer')
-            
-            $AnalyzerData = New-Object -TypeName System.Collections.Generic.List[System.Object]
-            Get-Content -Path $SyncHash.CsvFilePathTextBox.Text | ConvertFrom-Csv | ForEach-Object -Process {
-                $_.Bandwidth = $_.Bandwidth /1Mb
-                $_.Transfer = $_.Transfer /1Mb
-                if (!($_.Interval).StartsWith('0.0-') -or ($_.Interval -eq'0.0-1.0'))
-                {
-                    $AnalyzerData.add($_)
-                }   
-                else  
-                {
-                    $SyncHash.host.ui.WriteVerboseLine('Remove Total ' + $_.Time)
-                }           
-                
-            }
-            $AnalyzerDataLength = $AnalyzerData.Count
-
-            $SyncHash.host.ui.WriteVerboseLine(($AnalyzerDataLength | Out-String) + ($AnalyzerData[$AnalyzerDataLength-1] | Out-String))
-
-            if ($AnalyzerDataLength -gt $SyncHash.LastXTextBox.Text -and $SyncHash.LastXTextBox.Text -gt 0)
-                {
-                    $SyncHash.host.ui.WriteVerboseLine('Trim 1')
-                    $TrimedData =$AnalyzerData.GetRange($AnalyzerDataLength - $SyncHash.LastXTextBox.Text, $SyncHash.LastXTextBox.Text)
-                    $ChartDataAction1 = [Action]{
-                        $SyncHash.Chart.Series['Bandwidth (Mbits/sec)'].Points.DataBindXY($TrimedData.Interval, $TrimedData.Bandwidth)
-                        $SyncHash.Chart.Series['Transfer (MBytes)'].Points.DataBindXY($TrimedData.Interval, $TrimedData.Transfer)
-                    }
-                }
-            else
-            {
-                $ChartDataAction1 = [Action]{
-                    $SyncHash.Chart.Series['Bandwidth (Mbits/sec)'].Points.DataBindXY($AnalyzerData.Interval, $AnalyzerData.Bandwidth)
-                    $SyncHash.Chart.Series['Transfer (MBytes)'].Points.DataBindXY($AnalyzerData.Interval, $AnalyzerData.Transfer)
-                }
-            }
-            $SyncHash.Chart.Invoke($ChartDataAction1)
-
-            Get-Content -Path $SyncHash.CsvFilePathTextBox.Text -Wait -Tail 1 | ConvertFrom-Csv -Header Time,localIp,localPort,RemoteIp,RemotePort,Id,Interval,Transfer,Bandwidth | ForEach-Object -Process {
-                if (!($_.Interval).StartsWith('0.0-') -or ($_.Interval -eq'0.0-1.0'))
-                {
-                    $_.Bandwidth = $_.Bandwidth /1Mb
-                    $_.Transfer = $_.Transfer /1Mb
-                    
-                    $AnalyzerData.add($_)
-                    $AnalyzerDataLength++
-                    #$SyncHash.host.ui.WriteVerboseLine($_)
-                    #$SyncHash.host.ui.WriteVerboseLine($AnalyzerDataLength)
-                    $AnalyzerDataLine = $_
-
-                    if ($AnalyzerDataLength -gt -1)
-                    {
-                        $ChartDataAction2 = [Action]{
-                            if ($AnalyzerDataLength -gt $SyncHash.LastXTextBox.Text -and $SyncHash.LastXTextBox.Text -gt 0)
-                            {
-                                $SyncHash.Chart.Series['Bandwidth (Mbits/sec)'].Points.RemoveAt(0)
-                                $SyncHash.Chart.Series['Transfer (MBytes)'].Points.RemoveAt(0)
-                            }
-                            $SyncHash.Chart.Series['Bandwidth (Mbits/sec)'].Points.AddXY($AnalyzerDataLine.Interval, $AnalyzerDataLine.Bandwidth)
-                            $SyncHash.Chart.Series['Transfer (MBytes)'].Points.AddXY($AnalyzerDataLine.Interval, $AnalyzerDataLine.Transfer)
-                            $SyncHash.host.ui.WriteVerboseLine('Test: ' + ($SyncHash.Chart.Series['Transfer (MBytes)'].Points.Count | Out-String))
-                        }
-                        $SyncHash.Chart.Invoke($ChartDataAction2)
-                        $SyncHash.MaxScaleTextBox.Text = $SyncHash.Chart.ChartAreas[0].Axisy.Maximum
-                    }
-                    #$SyncHash.host.ui.WriteVerboseLine(($AnalyzerData | Out-String))
-                }
-                else  
-                {
-                    $SyncHash.host.ui.WriteVerboseLine('Remove Total2 ' + $_.Time)
-                }   
-
-            }
-        }
-
-        $SyncHash.Form.Add_Shown({$SyncHash.Form.Activate()})
+        $SyncHash.Form.Add_Shown({
+                $SyncHash.Form.Activate()
+        })
         $null = $SyncHash.Form.ShowDialog()
 
         # Clean
@@ -412,10 +437,8 @@ $UiPowerShell = [PowerShell]::Create().AddScript(
 
         $SyncHash.host.ui.WriteVerboseLine('Stop-Analyzer End')
         Stop-Analyzer
-        
-        $SyncHash.AnalyzerRunspace.Close()
-        $SyncHash.AnalyzerPowerShell.Dispose()
-        $SyncHash.Error = $Error
+
+        #$SyncHash.Error = $Error
     }
 )
 
