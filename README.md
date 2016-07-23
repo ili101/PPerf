@@ -6,11 +6,11 @@ A PowerShell script to start iperf and show the output (similar to Jperf)
 (This is not a finished product but it generally working)
 
 ## To do list
-* Rearrange interface
+* Add iperf3 option (no CSV support problem)
 * Add more iperf parameters to interface
-* Fix Bugs
-* Clean and improve the code
-* Add iperf3 option
+* ~~Rearrange interface~~
+* ~~Fix know Bugs~~
+* ~~Clean and improve the code~~
 
 ## Contributing
 Just fork and send pull requests, Thank you!
