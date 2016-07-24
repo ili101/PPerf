@@ -233,14 +233,14 @@ $UiPowerShell = [PowerShell]::Create().AddScript(
                         $Line = $Line -replace '[][]'
                         if ($Line -like ' ID *')
                         {
-                            $Header = $Line -split '\s+' | Where-Object {$_}
+                            $Header = ($Line = $Line -replace 'Total Datagram','Total-Datagram' -replace 'Lost/Total Datagrams','Lost/Total-Datagrams') -split '\s+' | Where-Object {$_}
                             $HeaderIndex = @()
                             foreach ($Head in $Header)
                             {
                                 $HeaderIndex += $Line.IndexOf($Head)
                             }
                         }
-                        elseif ($Header -and $Line -notlike '*connected to*' -and $Line -notlike '*sender*' -and $Line -notlike '*receiver*')
+                        elseif ($Header -and $Line -notlike '*connected to*' -and $Line -notlike '*sender*' -and $Line -notlike '*receiver*' -and $Line -cnotlike '*datagrams*')
                         {
                             $i=0
                             $CsvLine = New-Object System.Object
@@ -558,7 +558,7 @@ $UiPowerShell = [PowerShell]::Create().AddScript(
 
         Set-IperfCommand
 
-        Write-Status -Text 'PPerf Version 3.1' -Colore 'Blue'
+        Write-Status -Text 'PPerf Version 3.2' -Colore 'Blue'
 
         # Shows the form
         $null = $SyncHash.Form.ShowDialog()
