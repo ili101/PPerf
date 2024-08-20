@@ -3,9 +3,14 @@ PowerShell Iperf GUI
 
 A PowerShell script to start iperf and show the output (similar to Jperf)
 
-(This is not a finished product but it generally working)
+You'll need PowerShell 5 or above for it to work
 
 ## ChangeLog
+#### Version 4.0
+* Updated iPerf3 to 3.17.1
+* Updated iperf2 to 2.2.n
+* Updated Powershell script to reflect changes in iPerf3
+
 #### Version 3.1
 * iPerf 3 Support Added
 
@@ -13,13 +18,6 @@ A PowerShell script to start iperf and show the output (similar to Jperf)
 * New WPF UI
 * New iPerf 2 version
 * Many Fixes
-
-## To do list
-* ~~Add iperf3 option (no CSV support problem)~~
-* Add more iperf parameters to interface
-* ~~Rearrange interface~~
-* ~~Fix know Bugs~~
-* ~~Clean and improve the code~~
 
 ## Contributing
 Just fork and send pull requests, Thank you!
