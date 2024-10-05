@@ -1,4 +1,4 @@
-#requires -Version 3
+#requires -Version 5
 param($Work)
 
 # restart PowerShell with -noexit, the same script, and 1
@@ -89,7 +89,7 @@ $UiPowerShell = [PowerShell]::Create().AddScript(
                             $ErrorActionPreferenceOrg = $ErrorActionPreference
                             if ($IperfVersion -eq 2)
                             {
-                                'Time,localIp,localPort,RemoteIp,RemotePort,Id,Interval,Transfer,Bandwidth' | Out-File -FilePath $CsvFilePath
+                                'Time,localIp,localPort,RemoteIp,RemotePort,Id,Interval,Transfer,Bitrate' | Out-File -FilePath $CsvFilePath
                                 Write-Status -Text ((Invoke-Expression -Command "$IperfExe -v") 2>&1) -Colore 'Blue'
                                 $ErrorActionPreference = 'stop'
                                 Invoke-Expression -Command $Command | Out-File -FilePath $CsvFilePath -Append
@@ -179,7 +179,7 @@ $UiPowerShell = [PowerShell]::Create().AddScript(
             $AnalyzerDataLength = 0
 
             $ChartDataAction0 = [Action]{
-                $SyncHash.Chart.Series['Bandwidth (Mbits/sec)'].Points.Clear()
+                $SyncHash.Chart.Series['Bitrate (Mbits/sec)'].Points.Clear()
                 $SyncHash.Chart.Series['Transfer (MBytes)'].Points.Clear()
                 $SyncHash.host.ui.WriteVerboseLine('Clear Data: ' + ($SyncHash.Chart.Series['Transfer (MBytes)'].Points.Count | Out-String))
             }
@@ -194,7 +194,7 @@ $UiPowerShell = [PowerShell]::Create().AddScript(
                 {
                     foreach ($Line in $_)
                     {
-                        if ($Line -like '*Bandwidth*')
+                        if ($Line -like '*Bitrate*')
                         {
                             $Header = $Line -split ','
                         }
@@ -211,7 +211,7 @@ $UiPowerShell = [PowerShell]::Create().AddScript(
                             }
 
                             $CsvLine = $Line | ConvertFrom-Csv -Header $Header
-                            $CsvLine.Bandwidth = $CsvLine.Bandwidth /1Mb
+                            $CsvLine.Bitrate = $CsvLine.Bitrate /1Mb
                             $CsvLine.Transfer = $CsvLine.Transfer /1Mb
                             if (!($CsvLine.Interval).StartsWith('0.0-') -or ($CsvLine.Interval -eq '0.0-1.0'))
                             {
@@ -288,7 +288,7 @@ $UiPowerShell = [PowerShell]::Create().AddScript(
                     if ($AnalyzerDataLength -eq 0 -and $AnalyzerData.Count -gt 1)
                     {
                         $ChartDataAction1 = [Action]{
-                            $SyncHash.Chart.Series['Bandwidth (Mbits/sec)'].Points.DataBindXY($AnalyzerData.Interval, $AnalyzerData.Bandwidth)
+                            $SyncHash.Chart.Series['Bitrate (Mbits/sec)'].Points.DataBindXY($AnalyzerData.Interval, $AnalyzerData.Bitrate)
                             $SyncHash.Chart.Series['Transfer (MBytes)'].Points.DataBindXY($AnalyzerData.Interval, $AnalyzerData.Transfer)
                             $SyncHash.host.ui.WriteVerboseLine('Show Data: ' + ($SyncHash.Chart.Series['Transfer (MBytes)'].Points.Count | Out-String))
                         }
@@ -299,13 +299,13 @@ $UiPowerShell = [PowerShell]::Create().AddScript(
                         $ChartDataAction2 = [Action]{
                             while ($AnalyzerDataLength + $AnalyzerData.Count -gt $LastX -and $LastX -gt 0)
                             {
-                                $SyncHash.Chart.Series['Bandwidth (Mbits/sec)'].Points.RemoveAt(0)
+                                $SyncHash.Chart.Series['Bitrate (Mbits/sec)'].Points.RemoveAt(0)
                                 $SyncHash.Chart.Series['Transfer (MBytes)'].Points.RemoveAt(0)
                                 $Global:AnalyzerDataLength --
                             }
                             foreach ($Point in $AnalyzerData)
                             {
-                                $SyncHash.Chart.Series['Bandwidth (Mbits/sec)'].Points.AddXY($Point.Interval, $Point.Bandwidth)
+                                $SyncHash.Chart.Series['Bitrate (Mbits/sec)'].Points.AddXY($Point.Interval, $Point.Bitrate)
                                 $SyncHash.Chart.Series['Transfer (MBytes)'].Points.AddXY($Point.Interval, $Point.Transfer)
                                 $SyncHash.host.ui.WriteVerboseLine('Add Data Point: ' + ($SyncHash.Chart.Series['Transfer (MBytes)'].Points.Count | Out-String))
                             }
@@ -354,7 +354,7 @@ $UiPowerShell = [PowerShell]::Create().AddScript(
             {
                 $IperfVersionParams = ' -y c'
                 $Global:IperfVersion = 2
-                $Global:IperfExe = '.\iperf.exe'
+                $Global:IperfExe = '.\iperf2.exe'
             }
             else
             {
@@ -404,8 +404,8 @@ $UiPowerShell = [PowerShell]::Create().AddScript(
                 <TextBox x:Name="TimeTextBox" HorizontalAlignment="Left" Margin="145,38,0,0" TextWrapping="Wrap" Width="97" Height="23" VerticalAlignment="Top"/>
                 <GroupBox x:Name="VersionGroupBox" Header="iPerf Version" Height="82" Margin="0,0,115,0" VerticalAlignment="Top" HorizontalAlignment="Right" Width="100">
                     <Grid Margin="0">
-                        <RadioButton x:Name="Version2Radio" Content="Version 2" HorizontalAlignment="Left" Margin="10,10,0,0" VerticalAlignment="Top" IsChecked="True"/>
-                        <RadioButton x:Name="Version3Radio" Content="Version 3" HorizontalAlignment="Left" Margin="10,40,0,0" VerticalAlignment="Top"/>
+                        <RadioButton x:Name="Version2Radio" Content="Version 2" HorizontalAlignment="Left" Margin="10,10,0,0" VerticalAlignment="Top"/>
+                        <RadioButton x:Name="Version3Radio" Content="Version 3" HorizontalAlignment="Left" Margin="10,40,0,0" VerticalAlignment="Top" IsChecked="True"/>
                     </Grid>
                 </GroupBox>
             </Grid>
@@ -460,14 +460,14 @@ $UiPowerShell = [PowerShell]::Create().AddScript(
         $SyncHash.ChartArea = New-Object -TypeName System.Windows.Forms.DataVisualization.Charting.ChartArea
         $SyncHash.Chart.ChartAreas.Add($SyncHash.ChartArea)
 
-        [void]$SyncHash.Chart.Series.Add('Bandwidth (Mbits/sec)')
+        [void]$SyncHash.Chart.Series.Add('Bitrate (Mbits/sec)')
         [void]$SyncHash.Chart.Series.Add('Transfer (MBytes)')
 
         # Display the chart on a form
         #$SyncHash.Chart.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Right -bor [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left
         #$SyncHash.Chart.Location = New-Object -TypeName System.Drawing.Size -ArgumentList (0, 100)
         $SyncHash.Chart.BackColor = [System.Drawing.Color]::Transparent
-        $SyncHash.Chart.Series['Bandwidth (Mbits/sec)'].ChartType = [System.Windows.Forms.DataVisualization.Charting.SeriesChartType]::'Line'
+        $SyncHash.Chart.Series['Bitrate (Mbits/sec)'].ChartType = [System.Windows.Forms.DataVisualization.Charting.SeriesChartType]::'Line'
         $SyncHash.Chart.Series['Transfer (MBytes)'].ChartType = [System.Windows.Forms.DataVisualization.Charting.SeriesChartType]::'Line'
         $SyncHash.Chart.Width = 800
         $SyncHash.ChartLegend = New-Object -TypeName System.Windows.Forms.DataVisualization.Charting.Legend
@@ -558,7 +558,7 @@ $UiPowerShell = [PowerShell]::Create().AddScript(
 
         Set-IperfCommand
 
-        Write-Status -Text 'PPerf Version 3.2' -Colore 'Blue'
+        Write-Status -Text 'PPerf Version 4.0' -Colore 'Blue'
 
         # Shows the form
         $null = $SyncHash.Form.ShowDialog()
